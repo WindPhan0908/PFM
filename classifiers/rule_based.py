@@ -1,39 +1,44 @@
-"""Simple rule-based classifier implementation."""
+"""Rule-based classifier using grouped token scoring."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from utils.rules import normalize
+
 
 def classify_rule_based(
     description: str,
-    rules: dict[str, str],
+    rules: dict[str, list[str]],
     default_category: str = "Other",
 ) -> dict[str, Any]:
-    """Classify a transaction using direct keyword matching.
+    """Classify by counting exact token matches per group and taking max score."""
+    tokens = normalize(description).split()
 
-    Args:
-        description: Free text transaction description.
-        rules: Keyword->category mapping.
-        default_category: Label returned when no keyword matches.
+    best_group = default_category
+    best_score = 0
+    best_keywords: list[str] = []
 
-    Returns:
-        A standardized prediction payload with category and confidence details.
-    """
-    description_upper = (description or "").upper()
+    for group, keywords in rules.items():
+        matched = [kw for kw in keywords if kw in tokens]
+        score = len(matched)
 
-    for keyword, category in rules.items():
-        if keyword in description_upper:
-            return {
-                "category": category,
-                "score": 1.0,
-                "matched_keyword": keyword,
-                "method": "Rule-based",
-            }
+        if score > best_score:
+            best_score = score
+            best_group = group
+            best_keywords = matched
+
+    if best_score > 0:
+        return {
+            "category": best_group,
+            "score": float(best_score),
+            "matched_keyword": best_keywords,
+            "method": "Rule-based",
+        }
 
     return {
         "category": default_category,
         "score": 0.0,
-        "matched_keyword": None,
+        "matched_keyword": [],
         "method": "Rule-based",
     }

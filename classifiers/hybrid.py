@@ -1,68 +1,57 @@
-"""Hybrid confidence-aware classifier: weighted rules + fuzzy fallback."""
+"""Hybrid confidence-aware classifier (weighted rules + fuzzy fallback)."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from rapidfuzz import fuzz
+from classifiers.fuzzy_match import classify_fuzzy
+from utils.rules import normalize
 
 
 def classify_hybrid(
     description: str,
-    rules: dict[str, str],
+    rules: dict[str, list[str]],
     rule_weights: dict[str, float],
     rule_threshold: float = 1.0,
     fuzzy_threshold: float = 85.0,
     default_category: str = "Other",
 ) -> dict[str, Any]:
-    """Classify using weighted rule confidence, then fuzzy fallback."""
-    description_upper = (description or "").upper()
+    """Classify using weighted token scores, then fuzzy fallback if needed."""
+    tokens = normalize(description).split()
 
-    # Step 1: compute weighted rule score per category.
-    category_scores: dict[str, float] = {}
-    matched_keywords: list[str] = []
+    best_group = default_category
+    best_score = 0.0
+    best_keywords: list[str] = []
 
-    for keyword, category in rules.items():
-        if keyword in description_upper:
-            weight = float(rule_weights.get(keyword, 1.0))
-            category_scores[category] = category_scores.get(category, 0.0) + weight
-            matched_keywords.append(keyword)
+    # Step 1: weighted rule scoring per category.
+    for group, keywords in rules.items():
+        matched = [kw for kw in keywords if kw in tokens]
+        score = float(sum(rule_weights.get(kw, 1) for kw in matched))
 
-    if category_scores:
-        best_rule_category, best_rule_score = max(
-            category_scores.items(), key=lambda item: item[1]
-        )
-        if best_rule_score >= rule_threshold:
-            return {
-                "category": best_rule_category,
-                "score": best_rule_score,
-                "matched_keyword": ", ".join(matched_keywords),
-                "method": "Hybrid confidence-aware (rule score)",
-            }
+        if score > best_score:
+            best_score = score
+            best_group = group
+            best_keywords = matched
 
-    # Step 2: fallback to fuzzy matching.
-    best_keyword = None
-    best_category = default_category
-    best_fuzzy_score = 0.0
-
-    for keyword, category in rules.items():
-        score = float(fuzz.partial_ratio(description_upper, keyword))
-        if score > best_fuzzy_score:
-            best_fuzzy_score = score
-            best_keyword = keyword
-            best_category = category
-
-    if best_fuzzy_score >= fuzzy_threshold:
+    # Step 2: if enough rule confidence, return rule prediction.
+    if best_score >= rule_threshold:
         return {
-            "category": best_category,
-            "score": best_fuzzy_score,
-            "matched_keyword": best_keyword,
-            "method": "Hybrid confidence-aware (fuzzy fallback)",
+            "category": best_group,
+            "score": best_score,
+            "matched_keyword": best_keywords,
+            "method": "Hybrid confidence-aware (rule score)",
         }
 
+    # Step 3: fuzzy fallback.
+    fuzzy_result = classify_fuzzy(
+        description,
+        rules,
+        threshold=fuzzy_threshold,
+        default_category=default_category,
+    )
     return {
-        "category": default_category,
-        "score": best_fuzzy_score,
-        "matched_keyword": best_keyword,
-        "method": "Hybrid confidence-aware (default Other)",
+        "category": fuzzy_result["category"],
+        "score": fuzzy_result["score"],
+        "matched_keyword": fuzzy_result["matched_keyword"],
+        "method": "Hybrid confidence-aware (fuzzy fallback)",
     }
